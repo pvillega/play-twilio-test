@@ -4,12 +4,7 @@
 @import helper.twitterBootstrap._
 
 @main("Welcome to Twilio sample") {
-    @flash.get("session").map{ txt =>
-        <div class="alert alert-warning alert-dismissable">
-            <button type="button" class="close" data-dismiss="alert" aria-hidden="true">&times;</button>
-            <strong>WoW!</strong> @txt
-        </div>
-    }
+
 
     <h1>Welcome to Twilio demo</h1>
     <p>To proceed provide your Twilio key and secret. They will be stored in the user session to use the samples in the next page.</p>
@@ -30,6 +25,11 @@
                    @inputText(
                    twilioForm("token"),
                    '_label -> "Auth Token"
+                   )
+
+                   @inputText(
+                   twilioForm("appSID"),
+                   '_label -> "App SID"
                    )
                </fieldset>
 

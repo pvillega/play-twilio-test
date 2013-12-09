@@ -1,4 +1,4 @@
-@(title: String)(content: Html)
+@(title: String, jsSnippet : Html = Html(""))(content: Html)(implicit flash: Flash)
 
 <!DOCTYPE html>
 
@@ -19,11 +19,19 @@
     </head>
     <body>
         <div class="container">
+            @flash.data.map{ case (key, text) =>
+                <div class="alert alert-@key alert-dismissable">
+                    <button type="button" class="close" data-dismiss="alert" aria-hidden="true">&times;</button>
+                    <strong>@key!</strong> @text
+                </div>
+            }
+
             @content
         </div>
 
         <!-- jQuery (necessary for Bootstrap's JavaScript plugins) -->
         <script src="https://code.jquery.com/jquery.js"></script>
         <script src="//netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script>
+        @jsSnippet
     </body>
 </html>

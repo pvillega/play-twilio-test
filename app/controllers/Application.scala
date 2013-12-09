@@ -4,19 +4,16 @@ import play.api.mvc._
 import play.api.data._
 import play.api.data.Forms._
 import models.TwilioCredentials
-import play.api.libs.iteratee.{Input, Done}
+import scala.util.{Failure, Success}
+import play.Logger
+import scala.collection.mutable
+
 
 object Application extends Controller with TwilioAccess {
 
-  val TOKEN: String = "token"
-  val SID: String = "sid"
+  import PageForms._
 
-  val credentialsForm: Form[TwilioCredentials] = Form(
-    mapping(
-      "sid" -> nonEmptyText,
-      "token" -> nonEmptyText
-    )(TwilioCredentials.apply)(TwilioCredentials.unapply)
-  )
+  var callsReceived : List[String] = Nil
 
   def index = Action {
     implicit request =>
@@ -27,42 +24,59 @@ object Application extends Controller with TwilioAccess {
     implicit request =>
       credentialsForm.bindFromRequest.fold(
         errors => BadRequest(views.html.index(errors)),
-        credentials => Redirect(routes.Application.testTwilio).withSession(SID -> credentials.sid, TOKEN -> credentials.token)
+        credentials => Redirect(routes.Application.testTwilio).withSession(setSessionCredentials(credentials.sid, credentials.token, credentials.appSID))
       )
   }
 
   def testTwilio = hasCredentials {
-    (sid, token) =>
+    (sid, token, appSID) =>
       implicit request =>
-        Ok(views.html.twilio(sid))
+        val callToken = TwilioAPI.generateCallToken(sid, token, appSID) match {
+          case Failure(ex) => Logger.info(s"Couldn't generate the call token, error: ${ex.getMessage}");""
+          case Success(id) => Logger.info(s"Call token $id ready");id
+        }
+        Ok(views.html.twilio(sid, smsForm, callToken, callsReceived))
   }
 
-}
+  def sendSMS = hasCredentials {
+    (sid, token, appSID) =>
+      implicit request =>
+        smsForm.bindFromRequest.fold(
+          errors => BadRequest(views.html.twilio(sid, errors, "", callsReceived)),
+          details => {
+            val msg = TwilioAPI.sendSMS(sid, token, details.phone, details.msg) match {
+              case Failure(ex) => Flash(Map("danger" -> s"Couldn't send sms, error: ${ex.getMessage}"))
+              case Success(id) => Flash(Map("success" -> s"SMS sent with id $id"))
+            }
 
-trait TwilioAccess {
-
-  private def sid(request: RequestHeader) = request.session.get(Application.SID)
-
-  private def auth(request: RequestHeader) = request.session.get(Application.TOKEN)
-
-  private def onUnauthorized(request: RequestHeader) = Results.Redirect(routes.Application.index).flashing("session" -> "SID or Auth token missing in session")
-
-  def hasCredentials(f: => (String, String) => Request[AnyContent] => Result) = credentialsPresent(onUnauthorized) {
-    (sid, token) =>
-      Action(request => f(sid, token)(request))
+            Redirect(routes.Application.testTwilio).flashing(msg)
+          }
+        )
   }
 
-  def credentialsPresent[A](onUnauthorized: RequestHeader => SimpleResult)(action: (String, String) => EssentialAction): EssentialAction = {
-    EssentialAction {
-      request =>
-        val sid = request.session.get(Application.SID)
-        val token = request.session.get(Application.TOKEN)
+  def serveCallConfig = Action {
+    implicit request =>
+      Logger.info(s"Establishing a call form a browser")
+      Logger.debug(s"Request: ${request.queryString.toList}")
+      val to = request.queryString.get("To").getOrElse(mutable.Buffer()).mkString
+      Logger.info(s"Found target number $to")
+      val action = routes.Application.callDone.absoluteURL()
+      Logger.info(s"Action for recording is $action")
+      val xml = s"<Response><Dial callerId='+441473379566' method='GET' action='$action' record='true'><Number>$to</Number></Dial></Response>"
+      Ok(xml).as("text/xml")
+  }
 
-        if (sid.isEmpty || token.isEmpty)
-          Done(onUnauthorized(request), Input.Empty)
-        else
-          action(sid.get, token.get)(request)
-    }
+  def callDone = Action {
+    implicit request =>
+      Logger.info(s"A call from a browser has ended, storing details")
+      Logger.debug(s"Request: ${request.queryString.toList}")
+      val status = request.queryString.get("DialCallStatus").getOrElse(mutable.Buffer()).mkString
+      val sid = request.queryString.get("DialCallSid").getOrElse(mutable.Buffer()).mkString
+      val duration = request.queryString.get("DialCallDuration").getOrElse(mutable.Buffer()).mkString
+      val recording = request.queryString.get("RecordingUrl").getOrElse(mutable.Buffer()).mkString
+      Logger.info(s"Call $sid terminated with status $status after $duration. Recording available at $recording")
+      callsReceived = recording :: callsReceived
+      Ok
   }
 
 }
